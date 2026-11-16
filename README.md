@@ -1,4 +1,8 @@
-# 🚀 Star Vanguard
+[![make.fun · best-game-01](https://make.fun/badge/best-game-01.svg)](https://make.fun/bounty/best-game-01?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
+[![rank](https://make.fun/badge/best-game-01/hafizanpurnama-dev/makefun-best-game-01/rank.svg)](https://make.fun/bounty/best-game-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
+[![reward](https://make.fun/badge/best-game-01/hafizanpurnama-dev/makefun-best-game-01/reward.svg)](https://make.fun/bounty/best-game-01?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
+
+🏆 Entry for [make.fun bounty: Make the best game](https://make.fun/bounty/best-game-01)# 🚀 Star Vanguard
 
 > A fast-paced space shooter built with HTML5 Canvas. Survive waves of enemies, fight bosses, collect power-ups, and aim for the high score.
 
