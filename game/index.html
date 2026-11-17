@@ -30,6 +30,7 @@ canvas{display:block;margin:0 auto}
   <div class="label">COMBO</div>
   <div id="comboDisplay" style="color:#ff0;font-size:16px"></div>
 </div>
+<div id="bombDisplay" style="position:absolute;top:12px;right:12px;color:#f80;font:bold 16px 'Courier New',monospace;z-index:2;pointer-events:none;background:rgba(0,0,20,0.6);padding:8px 12px;border-radius:6px;border:1px solid rgba(255,136,0,0.2)">💣 <span id="bombCount">3</span></div>
 <div id="healthBar" style="display:none">
   <div class="bg"><div class="fg" id="healthFill" style="width:100%"></div></div>
 </div>
@@ -46,6 +47,7 @@ const waveEl = document.getElementById('wave');
 const enemyCountEl = document.getElementById('enemyCount');
 const livesEl = document.getElementById('lives');
 const comboDisplay = document.getElementById('comboDisplay');
+const bombCountEl = document.getElementById('bombCount');
 const healthBar = document.getElementById('healthBar');
 const healthFill = document.getElementById('healthFill');
 
@@ -82,6 +84,65 @@ function sfxHit() { playSound(120, 'sawtooth', 0.15, 0.06); }
 function sfxExplosion() { playSound(60, 'sawtooth', 0.3, 0.1); playSound(80, 'triangle', 0.2, 0.08); }
 function sfxPowerUp() { playSound(600, 'square', 0.1, 0.05, 200); playSound(900, 'square', 0.08, 0.05, 300); }
 function sfxBoss() { playSound(40, 'sawtooth', 0.5, 0.3); }
+function sfxBomb() { playSound(30, 'sawtooth', 0.8, 0.2); playSound(20, 'triangle', 0.6, 0.3, -10); }
+
+function useBomb() {
+  if (gameState.bombs <= 0 || gameState.state !== 'playing' && gameState.state !== 'paused') return;
+  gameState.bombs--;
+  gameState.shakeTimer = 20;
+  gameState.shakeIntensity = 12;
+  sfxBomb();
+  // Flash effect
+  gameState.flashTimer = 15;
+  // Destroy all non-boss enemies and enemy bullets
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    if (e.type === 'ebullet') {
+      spawnParticles(e.x, e.y, 3, '#fff', 2, 8);
+      enemies.splice(i, 1);
+    } else if (e.type !== 'boss') {
+      spawnParticles(e.x, e.y, 20, e.color, 5, 25);
+      const pts = e.score;
+      gameState.score += pts;
+      spawnFloatingText(e.x, e.y, `+${pts}`, e.color, 14);
+      enemies.splice(i, 1);
+      gameState.waveEnemiesLeft--;
+    }
+  }
+  // Damage boss
+  for (const e of enemies) {
+    if (e.type === 'boss') {
+      e.hp -= 3;
+      spawnParticles(e.x, e.y, 30, '#f0f', 4, 20);
+      if (e.hp <= 0) {
+        const pts = e.score * gameState.comboMultiplier;
+        gameState.score += pts;
+        gameState.bossActive = false;
+        spawnParticles(e.x, e.y, 80, '#f0f', 8, 50);
+        spawnParticles(e.x, e.y, 60, '#fff', 6, 40);
+        spawnFloatingText(e.x, e.y, `+${pts} BOSS!`, '#f0f', 22);
+        sfxExplosion();
+        spawnPowerUp(e.x, e.y);
+      }
+      break;
+    }
+  }
+  checkWaveComplete();
+  updateHUD();
+}
+
+let pauseSnapshot = null;
+function togglePause() {
+  if (gameState.state === 'paused') {
+    gameState.state = pauseSnapshot.state;
+    pauseSnapshot = null;
+    overlay.innerHTML = '';
+  } else if (gameState.state === 'playing') {
+    pauseSnapshot = { state: gameState.state };
+    gameState.state = 'paused';
+    overlay.innerHTML = '<span style="font-size:32px;color:#0ff">PAUSED</span><br><span style="font-size:12px;color:#888">press P to resume</span>';
+  }
+}
 
 // ─── INPUT ───────────────────────────────────────────
 const keys = {};
@@ -91,7 +152,16 @@ let usingTouch = false;
 let touchActive = false;
 let touchId = null;
 
-window.addEventListener('keydown', e => { keys[e.key] = true; initAudio(); });
+window.addEventListener('keydown', e => { keys[e.key] = true; initAudio();
+  // Bomb
+  if ((e.key === 'x' || e.key === 'X' || e.key === 'b' || e.key === 'B') && gameState.state === 'playing') {
+    useBomb();
+  }
+  // Pause
+  if ((e.key === 'p' || e.key === 'P') && (gameState.state === 'playing' || gameState.state === 'paused')) {
+    togglePause();
+  }
+});
 window.addEventListener('keyup', e => { keys[e.key] = false; });
 canvas.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; usingMouse = true; usingTouch = false; });
 canvas.addEventListener('mousedown', e => { initAudio(); usingMouse = true; usingTouch = false; gameState.mouseDown = true; });
@@ -206,11 +276,14 @@ const gameState = {
   bossMaxHP: 0,
   shakeTimer: 0,
   shakeIntensity: 0,
+  flashTimer: 0,
   frameCount: 0,
   comboCount: 0,
   comboTimer: 0,
   comboMultiplier: 1,
   waveTransitionTimer: 0,
+  highScore: parseInt(localStorage.getItem('starVanguardHighScore') || '0'),
+  bombs: 3,
 };
 
 // ─── PLAYER ─────────────────────────────────────────
@@ -313,10 +386,12 @@ function activatePowerUp(type) {
 function startWave() {
   const wave = gameState.wave;
   gameState.enemySpawnTimer = 0;
-  const scoutCount = 3 + wave * 2;
-  const fighterCount = Math.max(0, wave - 1) * 2;
-  const tankCount = Math.max(0, wave - 3);
-  const speedyCount = Math.max(0, wave - 2);
+  // Difficulty scaling: more enemies per wave, faster spawn
+  const diffScale = 1 + (wave - 1) * 0.15;
+  const scoutCount = Math.floor((3 + wave * 2) * diffScale);
+  const fighterCount = Math.floor(Math.max(0, wave - 1) * 2 * diffScale);
+  const tankCount = Math.floor(Math.max(0, wave - 3) * diffScale);
+  const speedyCount = Math.floor(Math.max(0, wave - 2) * diffScale);
   gameState.waveEnemiesLeft = scoutCount + fighterCount + tankCount + speedyCount;
 
   const spawnList = [];
@@ -325,22 +400,22 @@ function startWave() {
   for (let i = 0; i < tankCount; i++) spawnList.push('tank');
   for (let i = 0; i < speedyCount; i++) spawnList.push('speedy');
 
-  // Shuffle and stagger
+  // Shuffle and stagger (faster spawns at higher waves)
   for (let i = spawnList.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [spawnList[i], spawnList[j]] = [spawnList[j], spawnList[i]];
   }
 
-  // Spawn immediately and staggered
   let idx = 0;
+  const spawnDelay = Math.max(100, 300 - wave * 8);
   function spawnNext() {
     if (idx >= spawnList.length || gameState.state !== 'playing') return;
     spawnEnemy(spawnList[idx]);
     idx++;
-    if (idx < spawnList.length) setTimeout(spawnNext, 300 + Math.random() * 400);
+    if (idx < spawnList.length) setTimeout(spawnNext, spawnDelay + Math.random() * spawnDelay * 0.8);
   }
   spawnNext();
-  if (spawnList.length > 0) setTimeout(spawnNext, 300 + Math.random() * 400);
+  if (spawnList.length > 0) setTimeout(spawnNext, spawnDelay + Math.random() * spawnDelay * 0.8);
 }
 
 // ─── GAME LOOP ──────────────────────────────────────
@@ -360,6 +435,9 @@ function startGame() {
   gameState.waveTransitionTimer = 0;
   gameState.bossActive = false;
   gameState.shakeTimer = 0;
+  gameState.bombs = 3;
+  gameState.flashTimer = 0;
+  gameState.highScore = parseInt(localStorage.getItem('starVanguardHighScore') || '0');
   bullets.length = 0;
   enemies.length = 0;
   particles.length = 0;
@@ -394,14 +472,26 @@ function updateHUD() {
   if (hpPct > 66) healthFill.style.background = 'linear-gradient(90deg,#0f0,#8f0)';
   else if (hpPct > 33) healthFill.style.background = 'linear-gradient(90deg,#ff0,#f80)';
   else healthFill.style.background = 'linear-gradient(90deg,#f80,#f00)';
+  // Bombs
+  bombCountEl.textContent = gameState.bombs;
+  // High score shown in score line if applicable
+  if (gameState.highScore > 0 && gameState.score >= gameState.highScore) {
+    scoreEl.style.color = '#ff0';
+  } else {
+    scoreEl.style.color = '#fff';
+  }
 }
 
 function gameOver() {
   gameState.state = 'gameover';
+  if (gameState.score > gameState.highScore) {
+    gameState.highScore = gameState.score;
+    localStorage.setItem('starVanguardHighScore', gameState.score);
+  }
   sfxExplosion();
   spawnParticles(player.x, player.y, 60, '#ff0', 5, 40);
   spawnParticles(player.x, player.y, 40, '#f80', 4, 35);
-  overlay.innerHTML = `GAME OVER<br><span style="font-size:16px;color:#ff0">SCORE: ${gameState.score}</span><br><span style="font-size:12px;color:#888">click to retry</span>`;
+  overlay.innerHTML = `GAME OVER<br><span style="font-size:16px;color:#ff0">SCORE: ${gameState.score}</span><br><span style="font-size:12px;color:#888">HIGH: ${gameState.highScore}</span><br><span style="font-size:12px;color:#888">click to retry</span>`;
   comboDisplay.textContent = '';
 }
 
@@ -428,6 +518,7 @@ function update() {
   gameState.frameCount++;
   if (gameState.shakeTimer > 0) gameState.shakeTimer--;
   if (gameState.invincibleTimer > 0) gameState.invincibleTimer--;
+  if (gameState.flashTimer > 0) gameState.flashTimer--;
   if (gameState.comboTimer > 0) {
     gameState.comboTimer--;
     if (gameState.comboTimer <= 0) resetCombo();
@@ -947,6 +1038,12 @@ function render() {
     ctx.fill();
   }
 
+  // Bomb flash overlay
+  if (gameState.flashTimer > 0) {
+    ctx.fillStyle = `rgba(255,255,255,${gameState.flashTimer / 15 * 0.4})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+
   // Power-ups
   for (const p of powerUps) {
     const pulse = Math.sin(gameState.frameCount * 0.1) * 0.3 + 0.7;
@@ -1050,9 +1147,11 @@ function render() {
 
   // Overlay messages
   if (gameState.state === 'start') {
-    overlay.innerHTML = `<span style="font-size:32px;color:#0ff">STAR VANGUARD</span><br>
+    const hs = gameState.highScore > 0 ? `<br><span style="font-size:14px;color:#ff0">🏆 HIGH SCORE: ${gameState.highScore}</span>` : '';
+    overlay.innerHTML = `<span style="font-size:32px;color:#0ff">STAR VANGUARD</span>${hs}<br>
       <span style="font-size:12px;color:#888">click to start</span><br>
-      <span style="font-size:10px;color:#666">arrow/WASD move · mouse/touch move · space/click fire</span>`;
+      <span style="font-size:10px;color:#666">WASD/arrows move · mouse/touch · space/click fire</span><br>
+      <span style="font-size:10px;color:#f80">X/B = 💣 bomb · P = pause</span>`;
   }
 }
 
