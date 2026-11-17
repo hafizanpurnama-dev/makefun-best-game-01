@@ -8,17 +8,30 @@
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#000;overflow:hidden;touch-action:none;-webkit-tap-highlight-color:transparent}
 canvas{display:block;margin:0 auto}
-#ui{position:absolute;top:10px;left:10px;color:#0ff;font:14px monospace;z-index:2;pointer-events:none}
-#ui div{margin:2px 0}
+#ui{position:absolute;top:12px;left:12px;color:#0ff;font:bold 13px 'Courier New',monospace;z-index:2;pointer-events:none;background:rgba(0,0,20,0.6);padding:8px 12px;border-radius:6px;border:1px solid rgba(0,255,255,0.2);min-width:140px}
+#ui div{margin:3px 0}
+#ui .label{color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px}
 #overlay{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#fff;font:24px monospace;text-align:center;z-index:3;pointer-events:none;text-shadow:0 0 10px #0ff}
+#healthBar{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);z-index:2;pointer-events:none}
+#healthBar .bg{width:200px;height:6px;background:rgba(255,255,255,0.1);border-radius:3px;overflow:hidden;border:1px solid rgba(255,255,255,0.2)}
+#healthBar .fg{height:100%;background:linear-gradient(90deg,#0f0,#ff0,#f00);transition:width 0.3s;border-radius:3px}
 </style>
 </head>
 <body>
 <div id="ui">
-  <div>SCORE: <span id="score">0</span></div>
-  <div>WAVE: <span id="wave">1</span></div>
-  <div>LIVES: <span id="lives">♥♥♥</span></div>
-  <div id="powerBadge" style="color:#ff0;display:none">POWER-UP</div>
+  <div class="label">SCORE</div>
+  <div id="score" style="font-size:20px;color:#fff">0</div>
+  <div class="label">WAVE</div>
+  <div id="wave" style="color:#0ff">1</div>
+  <div class="label">ENEMIES</div>
+  <div id="enemyCount" style="color:#f80">0</div>
+  <div class="label">LIVES</div>
+  <div id="lives" style="color:#f44">♥♥♥</div>
+  <div class="label">COMBO</div>
+  <div id="comboDisplay" style="color:#ff0;font-size:16px"></div>
+</div>
+<div id="healthBar" style="display:none">
+  <div class="bg"><div class="fg" id="healthFill" style="width:100%"></div></div>
 </div>
 <div id="overlay"></div>
 <canvas id="c"></canvas>
@@ -30,8 +43,11 @@ const ctx = canvas.getContext('2d');
 const overlay = document.getElementById('overlay');
 const scoreEl = document.getElementById('score');
 const waveEl = document.getElementById('wave');
+const enemyCountEl = document.getElementById('enemyCount');
 const livesEl = document.getElementById('lives');
-const powerBadge = document.getElementById('powerBadge');
+const comboDisplay = document.getElementById('comboDisplay');
+const healthBar = document.getElementById('healthBar');
+const healthFill = document.getElementById('healthFill');
 
 let W, H;
 function resize() {
@@ -285,16 +301,10 @@ function spawnPowerUp(x, y) {
 
 function activatePowerUp(type) {
   gameState.powerUpType = type;
-  gameState.powerUpTimer = 300; // 5 seconds at 60fps
+  gameState.powerUpTimer = 300;
   gameState.powerUpActive = true;
-  powerBadge.style.display = 'block';
   if (type === 'shield') {
-    powerBadge.textContent = '🛡 SHIELD';
     gameState.invincibleTimer = 300;
-  } else if (type === 'rapid') {
-    powerBadge.textContent = '⚡ RAPID FIRE';
-  } else if (type === 'spread') {
-    powerBadge.textContent = '🔱 SPREAD SHOT';
   }
   sfxPowerUp();
 }
@@ -358,7 +368,6 @@ function startGame() {
   floatingTexts.length = 0;
   resetPlayer();
   overlay.textContent = '';
-  powerBadge.style.display = 'none';
   updateHUD();
   startWave();
 }
@@ -366,16 +375,25 @@ function startGame() {
 function updateHUD() {
   scoreEl.textContent = gameState.score;
   waveEl.textContent = gameState.wave;
+  const aliveCount = enemies.filter(e => e.type !== 'ebullet' && e.type !== 'boss').length + (gameState.bossActive ? 1 : 0);
+  enemyCountEl.textContent = aliveCount + gameState.waveEnemiesLeft;
   let hearts = '';
   for (let i = 0; i < gameState.lives; i++) hearts += '♥';
   livesEl.textContent = hearts || '☠';
   if (gameState.comboMultiplier > 1) {
-    powerBadge.style.display = 'block';
-    powerBadge.textContent = `🔥 COMBO x${gameState.comboMultiplier}`;
-    powerBadge.style.color = '#ff0';
-  } else if (!gameState.powerUpActive) {
-    powerBadge.style.display = 'none';
+    comboDisplay.textContent = `x${gameState.comboMultiplier}`;
+    comboDisplay.style.color = gameState.comboMultiplier >= 8 ? '#f0f' : gameState.comboMultiplier >= 5 ? '#ff0' : '#ffa';
+  } else {
+    comboDisplay.textContent = '';
   }
+  // Health bar for player
+  const maxLives = 3;
+  const hpPct = (gameState.lives / maxLives) * 100;
+  healthFill.style.width = hpPct + '%';
+  healthBar.style.display = 'block';
+  if (hpPct > 66) healthFill.style.background = 'linear-gradient(90deg,#0f0,#8f0)';
+  else if (hpPct > 33) healthFill.style.background = 'linear-gradient(90deg,#ff0,#f80)';
+  else healthFill.style.background = 'linear-gradient(90deg,#f80,#f00)';
 }
 
 function gameOver() {
@@ -384,7 +402,7 @@ function gameOver() {
   spawnParticles(player.x, player.y, 60, '#ff0', 5, 40);
   spawnParticles(player.x, player.y, 40, '#f80', 4, 35);
   overlay.innerHTML = `GAME OVER<br><span style="font-size:16px;color:#ff0">SCORE: ${gameState.score}</span><br><span style="font-size:12px;color:#888">click to retry</span>`;
-  powerBadge.style.display = 'none';
+  comboDisplay.textContent = '';
 }
 
 function hitPlayer() {
@@ -395,7 +413,7 @@ function hitPlayer() {
   gameState.shakeIntensity = 8;
   gameState.powerUpActive = false;
   gameState.powerUpTimer = 0;
-  powerBadge.style.display = 'none';
+  comboDisplay.textContent = '';
   sfxHit();
   spawnParticles(player.x, player.y, 20, '#fff', 3, 20);
   updateHUD();
@@ -419,7 +437,6 @@ function update() {
     gameState.powerUpTimer--;
     if (gameState.powerUpTimer <= 0) {
       gameState.powerUpActive = false;
-      powerBadge.style.display = 'none';
     }
   }
 
@@ -790,6 +807,22 @@ function drawShip(x, y, radius, color, isPlayer = false) {
       ctx.arc(0, 0, radius * 1.4, 0, Math.PI * 2);
       ctx.stroke();
     }
+    // Power-up active glow
+    if (gameState.powerUpActive) {
+      const pColors = { rapid: '#ff0', spread: '#0ff', shield: '#0f0' };
+      const pAlpha = 0.3 + Math.sin(gameState.frameCount * 0.15) * 0.2;
+      ctx.strokeStyle = pColors[gameState.powerUpType] || '#ff0';
+      ctx.globalAlpha = pAlpha;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, radius * 1.6, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(0, 0, radius * 1.8, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   } else {
     // Enemy ship
     ctx.rotate(Math.PI / 2);
@@ -887,6 +920,20 @@ function render() {
   // Background
   ctx.fillStyle = '#000011';
   ctx.fillRect(0, 0, W, H);
+
+  // Nebula clouds
+  const nebulaCount = 4;
+  for (let n = 0; n < nebulaCount; n++) {
+    const nx = W * (0.2 + n * 0.25 + Math.sin(gameState.frameCount * 0.001 + n) * 0.15);
+    const ny = H * (0.2 + (n % 2) * 0.4 + Math.cos(gameState.frameCount * 0.0008 + n * 3) * 0.1);
+    const nr = Math.min(W, H) * 0.35;
+    const colors = ['rgba(20,0,40,0.15)', 'rgba(0,10,30,0.15)', 'rgba(10,0,20,0.12)', 'rgba(0,5,25,0.1)'];
+    const grad = ctx.createRadialGradient(nx, ny, nr * 0.1, nx, ny, nr);
+    grad.addColorStop(0, colors[n]);
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+  }
 
   // Stars with vertical parallax
   for (const s of stars) {
