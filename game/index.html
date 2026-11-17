@@ -15,6 +15,16 @@ canvas{display:block;margin:0 auto}
 #healthBar{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);z-index:2;pointer-events:none}
 #healthBar .bg{width:200px;height:6px;background:rgba(255,255,255,0.1);border-radius:3px;overflow:hidden;border:1px solid rgba(255,255,255,0.2)}
 #healthBar .fg{height:100%;background:linear-gradient(90deg,#0f0,#ff0,#f00);transition:width 0.3s;border-radius:3px}
+/* Difficulty selector */
+#diffSelect{position:absolute;top:55%;left:50%;transform:translate(-50%,-50%);z-index:10;pointer-events:auto;display:none;text-align:center}
+#diffSelect button{padding:10px 22px;margin:4px;font:bold 14px monospace;border:2px solid #0ff;background:rgba(0,20,40,.8);color:#0ff;cursor:pointer;border-radius:8px;transition:all .2s}
+#diffSelect button:hover{background:rgba(0,255,255,.2);transform:scale(1.05)}
+#diffSelect button.sel{border-color:#ff0;color:#ff0;background:rgba(255,255,0,.15)}
+#diffSelect .dtitle{font:bold 18px monospace;color:#0ff;margin-bottom:10px;text-shadow:0 0 8px #0ff}
+/* Achievement toast */
+#achToast{position:absolute;top:60px;left:50%;transform:translateX(-50%);z-index:5;pointer-events:none;text-align:center;transition:opacity .4s;opacity:0}
+#achToast .achInner{background:rgba(0,20,40,.9);border:2px solid #ff0;border-radius:10px;padding:10px 20px;font:bold 14px monospace;color:#ff0;text-shadow:0 0 6px #ff0;box-shadow:0 0 20px rgba(255,255,0,.3)}
+#achToast .achIcon{font-size:28px;display:block;margin-bottom:4px}
 </style>
 </head>
 <body>
@@ -29,12 +39,21 @@ canvas{display:block;margin:0 auto}
   <div id="lives" style="color:#f44">♥♥♥</div>
   <div class="label">COMBO</div>
   <div id="comboDisplay" style="color:#ff0;font-size:16px"></div>
+  <div class="label">DIFFICULTY</div>
+  <div id="diffDisplay" style="color:#ff0;font-size:11px">NORMAL</div>
 </div>
 <div id="bombDisplay" style="position:absolute;top:12px;right:12px;color:#f80;font:bold 16px 'Courier New',monospace;z-index:2;pointer-events:none;background:rgba(0,0,20,0.6);padding:8px 12px;border-radius:6px;border:1px solid rgba(255,136,0,0.2)">💣 <span id="bombCount">3</span></div>
 <div id="healthBar" style="display:none">
   <div class="bg"><div class="fg" id="healthFill" style="width:100%"></div></div>
 </div>
 <div id="overlay"></div>
+<div id="diffSelect">
+  <div class="dtitle">SELECT DIFFICULTY</div>
+  <button onclick="setDifficulty('easy')" id="btnEasy">🐣 EASY</button>
+  <button onclick="setDifficulty('normal')" id="btnNormal">⚡ NORMAL</button>
+  <button onclick="setDifficulty('hard')" id="btnHard">💀 HARD</button>
+</div>
+<div id="achToast"><span class="achInner"><span class="achIcon"></span><span id="achText"></span></span></div>
 <canvas id="c"></canvas>
 
 <script>
@@ -48,6 +67,7 @@ const enemyCountEl = document.getElementById('enemyCount');
 const livesEl = document.getElementById('lives');
 const comboDisplay = document.getElementById('comboDisplay');
 const bombCountEl = document.getElementById('bombCount');
+const diffDisplay = document.getElementById('diffDisplay');
 const healthBar = document.getElementById('healthBar');
 const healthFill = document.getElementById('healthFill');
 
@@ -120,6 +140,7 @@ function useBomb() {
         const pts = e.score * gameState.comboMultiplier;
         gameState.score += pts;
         gameState.bossActive = false;
+        markBossKill();
         spawnParticles(e.x, e.y, 80, '#f0f', 8, 50);
         spawnParticles(e.x, e.y, 60, '#fff', 6, 40);
         spawnFloatingText(e.x, e.y, `+${pts} BOSS!`, '#f0f', 22);
@@ -241,7 +262,52 @@ function resetCombo() {
   gameState.comboMultiplier = 1;
 }
 
-// ─── STARS (parallax background) ───────────────────
+// ─── DIFFICULTY SELECTOR ─────────────────────────────
+function setDifficulty(d: string) {
+  gameState.difficulty = d as 'easy'|'normal'|'hard';
+  localStorage.setItem('starVanguardDiff', d);
+  // Update button visuals
+  ['btnEasy','btnNormal','btnHard'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) btn.className = id === 'btn'+d.charAt(0).toUpperCase()+d.slice(1) ? 'sel' : '';
+  });
+}
+
+// ─── ACHIEVEMENT SYSTEM ──────────────────────────────
+const ACH_DEFS = [
+  {id:'firstBlood', icon:'🩸', text:'First Blood!', check:()=>gameState.score>=100},
+  {id:'wave5', icon:'🌊', text:'Wave 5 Conqueror', check:()=>gameState.wave>=5},
+  {id:'wave10', icon:'🌀', text:'Wave 10 Veteran', check:()=>gameState.wave>=10},
+  {id:'combo5', icon:'🔥', text:'Combo x5!', check:()=>gameState.comboMultiplier>=5},
+  {id:'combo10', icon:'💥', text:'Combo x10!!', check:()=>gameState.comboMultiplier>=10},
+  {id:'bossSlayer', icon:'👑', text:'Boss Slayer', check:()=>false},
+  {id:'threeBosses', icon:'🏆', text:'Triple Boss Killer', check:()=>false},
+  {id:'hardMode', icon:'💀', text:'Hard Mode Survivor', check:()=>gameState.difficulty==='hard'&&gameState.wave>=3},
+];
+let bossKillCount = 0;
+
+function markBossKill() { bossKillCount++; if (bossKillCount>=1) unlockAch('bossSlayer'); if (bossKillCount>=3) unlockAch('threeBosses'); }
+
+function unlockAch(id: string) {
+  if (gameState.achievements.includes(id)) return;
+  const def = ACH_DEFS.find(a=>a.id===id);
+  if (!def) return;
+  gameState.achievements.push(id);
+  try { localStorage.setItem('starVanguardAch', JSON.stringify(gameState.achievements)); } catch {}
+  gameState.pendingAch = { icon: def.icon, text: def.text, timer: 180 };
+}
+
+function checkAchievements() {
+  if (gameState.pendingAch) return;
+  for (const def of ACH_DEFS) {
+    if (!gameState.achievements.includes(def.id) && def.check()) {
+      unlockAch(def.id);
+      break;
+    }
+  }
+}
+
+
 const stars = [];
 let starBaseW = 0, starBaseH = 0;
 function initStars() {
@@ -293,6 +359,9 @@ const gameState = {
   waveTransitionTimer: 0,
   highScore: parseInt(localStorage.getItem('starVanguardHighScore') || '0'),
   bombs: 3,
+  difficulty: (['easy','normal','hard'].includes(localStorage.getItem('starVanguardDiff')||'') ? localStorage.getItem('starVanguardDiff') : 'normal') as 'easy'|'normal'|'hard',
+  achievements: (()=>{try{const a=JSON.parse(localStorage.getItem('starVanguardAch')||'[]');return Array.isArray(a)?a:[]}catch{return[]}})(),
+  pendingAch: null as {icon:string;text:string;timer:number}|null,
 };
 
 // ─── PLAYER ─────────────────────────────────────────
@@ -333,8 +402,9 @@ function spawnEnemy(type) {
     speedy: { radius: 10, hp: 1, speed: 4 + Math.random() * 3, color: '#4f4', score: 150, fireRate: 0 },
   };
   const cfg = configs[type];
-  // Scale stats per wave
-  const waveScale = 1 + (gameState.wave - 1) * 0.12;
+  // Scale stats per wave and difficulty
+  const diffMult = gameState.difficulty === 'easy' ? 0.7 : gameState.difficulty === 'hard' ? 1.4 : 1.0;
+  const waveScale = (1 + (gameState.wave - 1) * 0.12) * diffMult;
   const angle = Math.atan2(player.y - y, player.x - x);
   enemies.push({
     x, y, type,
@@ -398,7 +468,8 @@ function startWave() {
   const wave = gameState.wave;
   gameState.enemySpawnTimer = 0;
   // Difficulty scaling: more enemies per wave, faster spawn
-  const diffScale = 1 + (wave - 1) * 0.15;
+  const diffMult = gameState.difficulty === 'easy' ? 0.6 : gameState.difficulty === 'hard' ? 1.5 : 1.0;
+  const diffScale = (1 + (wave - 1) * 0.15) * diffMult;
   const scoutCount = Math.floor((3 + wave * 2) * diffScale);
   const fighterCount = Math.floor(Math.max(0, wave - 1) * 2 * diffScale);
   const tankCount = Math.floor(Math.max(0, wave - 3) * diffScale);
@@ -435,7 +506,7 @@ function startGame() {
   gameState.state = 'playing';
   gameState.score = 0;
   gameState.wave = 1;
-  gameState.lives = 3;
+  gameState.lives = gameState.difficulty === 'easy' ? 5 : gameState.difficulty === 'hard' ? 2 : 3;
   gameState.powerUpActive = false;
   gameState.powerUpTimer = 0;
   gameState.powerUpType = null;
@@ -446,8 +517,10 @@ function startGame() {
   gameState.waveTransitionTimer = 0;
   gameState.bossActive = false;
   gameState.shakeTimer = 0;
-  gameState.bombs = 3;
+  gameState.bombs = gameState.difficulty === 'easy' ? 5 : gameState.difficulty === 'hard' ? 2 : 3;
   gameState.flashTimer = 0;
+  gameState.pendingAch = null;
+  bossKillCount = 0;
   gameState.highScore = parseInt(localStorage.getItem('starVanguardHighScore') || '0');
   bullets.length = 0;
   enemies.length = 0;
@@ -458,6 +531,7 @@ function startGame() {
   bombRings.length = 0;
   resetPlayer();
   overlay.textContent = '';
+  document.getElementById('diffSelect')!.style.display = 'none';
   updateHUD();
   startWave();
 }
@@ -486,6 +560,10 @@ function updateHUD() {
   else healthFill.style.background = 'linear-gradient(90deg,#f80,#f00)';
   // Bombs
   bombCountEl.textContent = gameState.bombs;
+  // Difficulty display
+  diffDisplay.textContent = gameState.difficulty.toUpperCase();
+  const dc = gameState.difficulty === 'easy' ? '#4f4' : gameState.difficulty === 'hard' ? '#f44' : '#ff0';
+  diffDisplay.style.color = dc;
   // High score shown in score line if applicable
   if (gameState.highScore > 0 && gameState.score >= gameState.highScore) {
     scoreEl.style.color = '#ff0';
@@ -531,11 +609,13 @@ function update() {
   if (gameState.shakeTimer > 0) gameState.shakeTimer--;
   if (gameState.invincibleTimer > 0) gameState.invincibleTimer--;
   if (gameState.flashTimer > 0) gameState.flashTimer--;
+  if (gameState.pendingAch) { gameState.pendingAch.timer--; if (gameState.pendingAch.timer <= 0) gameState.pendingAch = null; }
   if (gameState.comboTimer > 0) {
     gameState.comboTimer--;
     if (gameState.comboTimer <= 0) resetCombo();
   }
   if (gameState.waveTransitionTimer > 0) gameState.waveTransitionTimer--;
+  checkAchievements();
   if (gameState.powerUpActive) {
     gameState.powerUpTimer--;
     if (gameState.powerUpTimer <= 0) {
@@ -660,6 +740,7 @@ function update() {
         const pts = e.score * gameState.comboMultiplier;
         gameState.score += pts;
         gameState.bossActive = false;
+        markBossKill();
         spawnParticles(e.x, e.y, 80, '#f0f', 8, 50);
         spawnParticles(e.x, e.y, 60, '#fff', 6, 40);
         spawnFloatingText(e.x, e.y, `+${pts} BOSS! x${gameState.comboMultiplier}`, '#f0f', 22);
@@ -1186,6 +1267,20 @@ function render() {
     ctx.stroke();
   }
 
+  // Achievement toast
+  const t = document.getElementById('achToast');
+  if (t) {
+    if (gameState.pendingAch) {
+      const a = gameState.pendingAch;
+      const alpha = Math.min(1, a.timer > 160 ? (180 - a.timer) / 20 : a.timer / 20);
+      t.style.opacity = String(Math.max(0, alpha));
+      (t.querySelector('.achIcon') as HTMLElement).textContent = a.icon;
+      (document.getElementById('achText') as HTMLElement).textContent = a.text;
+    } else {
+      t.style.opacity = '0';
+    }
+  }
+
   // Player
   if (gameState.state !== 'gameover') {
     drawShip(player.x, player.y, player.radius, '#4488cc', true);
@@ -1196,10 +1291,16 @@ function render() {
   // Overlay messages
   if (gameState.state === 'start') {
     const hs = gameState.highScore > 0 ? `<br><span style="font-size:14px;color:#ff0">🏆 HIGH SCORE: ${gameState.highScore}</span>` : '';
+    const diffLabel = gameState.difficulty.toUpperCase();
+    const diffColor = gameState.difficulty === 'easy' ? '#4f4' : gameState.difficulty === 'hard' ? '#f44' : '#ff0';
     overlay.innerHTML = `<span style="font-size:32px;color:#0ff">STAR VANGUARD</span>${hs}<br>
-      <span style="font-size:12px;color:#888">click to start</span><br>
+      <span style="font-size:12px;color:#888">click or tap to start</span><br>
       <span style="font-size:10px;color:#666">WASD/arrows move · mouse/touch · space/click fire</span><br>
-      <span style="font-size:10px;color:#f80">X/B = 💣 bomb · P = pause</span>`;
+      <span style="font-size:10px;color:#f80">X/B = 💣 bomb · P = pause</span><br>
+      <span style="font-size:11px;color:${diffColor}">Difficulty: ${diffLabel} (${gameState.difficulty==='easy'?'5 lives':gameState.difficulty==='hard'?'2 lives':'3 lives'})</span>`;
+    document.getElementById('diffSelect')!.style.display = 'block';
+    // Highlight current difficulty button
+    setDifficulty(gameState.difficulty);
   }
 }
 
