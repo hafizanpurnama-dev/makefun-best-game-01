@@ -94,6 +94,8 @@ function useBomb() {
   sfxBomb();
   // Flash effect
   gameState.flashTimer = 15;
+  // Expanding ring
+  bombRings.push({ x: player.x, y: player.y, radius: 10, maxRadius: Math.max(W, H) * 1.2, life: 30, maxLife: 30 });
   // Destroy all non-boss enemies and enemy bullets
   for (let i = enemies.length - 1; i >= 0; i--) {
     const e = enemies[i];
@@ -217,6 +219,7 @@ function spawnExhaust(x, y) {
 
 // ─── FLOATING TEXT ──────────────────────────────────
 const floatingTexts = [];
+const bombRings = [];
 function spawnFloatingText(x, y, text, color = '#fff', size = 14) {
   floatingTexts.push({ x, y, text, color, size, vy: -2, life: 45, maxLife: 45 });
 }
@@ -226,6 +229,12 @@ function addKill() {
   gameState.comboCount++;
   gameState.comboTimer = 90; // 1.5s window at 60fps
   gameState.comboMultiplier = Math.min(10, 1 + Math.floor(gameState.comboCount / 3));
+  // Milestone rewards
+  if (gameState.comboCount === 10 || gameState.comboCount === 20) {
+    gameState.bombs = Math.min(5, gameState.bombs + 1);
+    spawnFloatingText(player.x, player.y - 30, '💣+1', '#f80', 18);
+    sfxPowerUp();
+  }
 }
 function resetCombo() {
   gameState.comboCount = 0;
@@ -324,13 +333,15 @@ function spawnEnemy(type) {
     speedy: { radius: 10, hp: 1, speed: 4 + Math.random() * 3, color: '#4f4', score: 150, fireRate: 0 },
   };
   const cfg = configs[type];
+  // Scale stats per wave
+  const waveScale = 1 + (gameState.wave - 1) * 0.12;
   const angle = Math.atan2(player.y - y, player.x - x);
   enemies.push({
     x, y, type,
     radius: cfg.radius,
-    hp: cfg.hp,
-    maxHp: cfg.hp,
-    speed: cfg.speed,
+    hp: Math.ceil(cfg.hp * (1 + (gameState.wave - 1) * 0.1)),
+    maxHp: Math.ceil(cfg.hp * (1 + (gameState.wave - 1) * 0.1)),
+    speed: cfg.speed * waveScale,
     color: cfg.color,
     score: cfg.score,
     fireRate: cfg.fireRate,
@@ -444,6 +455,7 @@ function startGame() {
   powerUps.length = 0;
   exhaustParticles.length = 0;
   floatingTexts.length = 0;
+  bombRings.length = 0;
   resetPlayer();
   overlay.textContent = '';
   updateHUD();
@@ -610,7 +622,20 @@ function update() {
         } else if (e.phase === 1) {
           e.x = W / 2 + Math.sin(e.phaseTimer * 0.02) * W * 0.4;
         } else {
+          // Phase 2: circular bullet ring every few seconds
           e.x = W / 2 + Math.cos(e.phaseTimer * 0.025) * W * 0.35;
+          if (e.phaseTimer % 60 === 0) {
+            const bulletCount = 12 + gameState.wave;
+            for (let k = 0; k < bulletCount; k++) {
+              const a = (k / bulletCount) * Math.PI * 2 + e.phaseTimer * 0.02;
+              enemies.push({
+                x: e.x, y: e.y + e.radius * 0.5, type: 'ebullet',
+                radius: 4, hp: 1, maxHp: 1, speed: 4,
+                color: '#f0f', score: 0, fireRate: 0, fireTimer: 0,
+                angle: a, vx: Math.cos(a) * 4, vy: Math.sin(a) * 4, life: 150,
+              });
+            }
+          }
         }
       }
 
@@ -787,6 +812,14 @@ function update() {
     ft.y += ft.vy;
     ft.life--;
     if (ft.life <= 0) floatingTexts.splice(i, 1);
+  }
+
+  // Update bomb rings
+  for (let i = bombRings.length - 1; i >= 0; i--) {
+    const r = bombRings[i];
+    r.radius += (r.maxRadius - r.radius) * 0.15;
+    r.life--;
+    if (r.life <= 0) bombRings.splice(i, 1);
   }
 
   updateHUD();
@@ -1137,6 +1170,21 @@ function render() {
     ctx.fillText(ft.text, ft.x, ft.y);
   }
   ctx.globalAlpha = 1;
+
+  // Bomb rings
+  for (const r of bombRings) {
+    const alpha = r.life / r.maxLife;
+    ctx.strokeStyle = `rgba(255,255,255,${alpha})`;
+    ctx.lineWidth = 3 * alpha;
+    ctx.beginPath();
+    ctx.arc(r.x, r.y, r.radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = `rgba(255,160,0,${alpha * 0.6})`;
+    ctx.lineWidth = 6 * alpha;
+    ctx.beginPath();
+    ctx.arc(r.x, r.y, r.radius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
   // Player
   if (gameState.state !== 'gameover') {
